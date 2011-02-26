@@ -3,6 +3,7 @@ import inspect, sys
 from optparse import make_option, OptionGroup
 from django.core.management.base import BaseCommand
 from django.utils.importlib import import_module
+from django.conf import settings
 from django_jenkins import signals
 from django_jenkins.runner import CITestSuiteRunner
 
@@ -23,7 +24,19 @@ class TaskListCommand(BaseCommand):
 
     def __init__(self):
         self.tasks_cls = [import_module(module_name).Task for module_name in self.get_task_list()]
-                
+        test_runner = getattr(settings, 'JENKINS_RUNNER', None)
+        if test_runner:
+            test_path = test_runner.split('.')
+            # Allow for Python 2.5 relative paths
+            if len(test_path) > 1:
+                test_module_name = '.'.join(test_path[:-1])
+            else:
+                test_module_name = '.'
+            test_module = __import__(test_module_name, {}, {}, test_path[-1])
+            test_runner = getattr(test_module, test_path[-1])
+            self.runner_cls = test_runner
+        else:
+            self.runner_cls = CITestSuiteRunner
 
     def handle(self, *test_labels, **options):
         # instantiate tasks
@@ -37,7 +50,7 @@ class TaskListCommand(BaseCommand):
                     signal.connect(signal_handler)
         
         # run
-        test_runner = CITestSuiteRunner(output_dir=options['output_dir'], interactive=False, debug=options['debug'])
+        test_runner = self.runner_cls(output_dir=options['output_dir'], interactive=False, debug=options['debug'])
         
         if test_runner.run_tests(test_labels):
             sys.exit(1)
